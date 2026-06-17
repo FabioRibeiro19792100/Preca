@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Extrator de Precatórios · Beneficiário e Valor Provável</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --paper:#EBECE6;
+  --panel:#F6F6F1;
+  --panel-2:#FCFCF8;
+  --ink:#1B1A15;
+  --ink-soft:#5C5A50;
+  --ink-faint:#8B897D;
+  --rule:#D5D4C8;
+  --rule-strong:#BBB9AB;
+  --indigo:#2B3A67;
+  --indigo-soft:#56689c;
+  --green:#2E6049;
+  --green-tint:#e3ece4;
+  --oxblood:#8E2C2C;
+  --oxblood-tint:#f1e2df;
+  --amber:#A8741A;
+  --amber-tint:#f3e8d2;
+  --serif:'IBM Plex Serif','Iowan Old Style',Georgia,'Times New Roman',serif;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:15px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1240px;margin:0 auto;padding:0 22px}
+
+/* ---------- header ---------- */
+header.top{
+  border-bottom:1px solid var(--rule-strong);
+  background:linear-gradient(180deg,#F6F6F1,#EBECE6);
+}
+.top-inner{display:flex;align-items:baseline;justify-content:space-between;gap:18px;padding:22px 0 18px;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.mark{
+  font-family:var(--serif);font-weight:600;letter-spacing:.01em;
+  font-size:25px;line-height:1;color:var(--ink);
+}
+.mark .arrow{color:var(--indigo);font-weight:500;padding:0 .15em}
+.sub{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint)}
+.status{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);display:flex;align-items:center;gap:8px}
+.status .dot{width:8px;height:8px;border-radius:50%;background:var(--rule-strong)}
+.status.ready .dot{background:var(--green)}
+.status.run .dot{background:var(--amber);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.3}}
+
+/* ---------- metrics strip ---------- */
+.metrics{border-bottom:1px solid var(--rule);background:var(--panel)}
+.metrics-inner{display:grid;grid-template-columns:repeat(8,1fr);gap:1px;background:var(--rule)}
+.metric{background:var(--panel);padding:13px 14px}
+.metric .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint)}
+.metric .v{font-family:var(--mono);font-size:19px;font-weight:500;color:var(--ink);margin-top:5px;letter-spacing:-.01em}
+.metric .v.accent{color:var(--indigo)}
+@media(max-width:900px){.metrics-inner{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:520px){.metrics-inner{grid-template-columns:repeat(2,1fr)}}
+
+/* ---------- layout ---------- */
+.grid{display:grid;grid-template-columns:312px 1fr;gap:30px;padding:28px 0 80px;align-items:start}
+@media(max-width:980px){.grid{grid-template-columns:1fr}}
+
+/* ---------- config panel ---------- */
+.panel{position:sticky;top:18px}
+@media(max-width:980px){.panel{position:static}}
+.cfg{background:var(--panel);border:1px solid var(--rule);border-radius:3px}
+.cfg h2{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-soft);margin:0;padding:14px 16px 12px;border-bottom:1px solid var(--rule);
+}
+.cfg-body{padding:6px 16px 16px}
+.field{margin-top:15px}
+.field > label{display:block;font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:7px}
+.field .hint{font-size:11px;color:var(--ink-faint);margin-top:5px;line-height:1.4}
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.seg button{
+  font-family:var(--mono);font-size:12px;color:var(--ink-soft);
+  background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;
+  padding:6px 9px;cursor:pointer;transition:.12s;
+}
+.seg button:hover{border-color:var(--rule-strong)}
+.seg button[aria-pressed="true"]{background:var(--indigo);color:#fff;border-color:var(--indigo)}
+input[type=text],input[type=number]{
+  width:100%;font-family:var(--mono);font-size:13px;color:var(--ink);
+  background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;padding:8px 10px;
+}
+input:focus,.seg button:focus-visible,.tab:focus-visible,.run:focus-visible,.toggle:focus-visible{
+  outline:2px solid var(--indigo);outline-offset:1px;border-color:transparent
+}
+.range-row{display:flex;gap:8px;align-items:center}
+.range-row span{font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+.presets{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.presets button{
+  font-family:var(--sans);font-size:12.5px;font-weight:600;text-align:left;
+  background:var(--panel-2);border:1px solid var(--rule);border-radius:2px;padding:8px 10px;cursor:pointer;color:var(--ink);
+}
+.presets button:hover{border-color:var(--indigo-soft)}
+.presets button[aria-pressed="true"]{border-color:var(--indigo);box-shadow:inset 0 0 0 1px var(--indigo)}
+.presets .pdesc{display:block;font-weight:400;font-size:10px;color:var(--ink-faint);margin-top:2px;font-family:var(--mono);letter-spacing:.04em}
+.phases{display:flex;flex-direction:column;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:2px;overflow:hidden}
+.toggle{display:flex;align-items:center;gap:9px;background:var(--panel-2);padding:8px 11px;cursor:pointer;border:none;width:100%;text-align:left;font:inherit}
+.toggle .box{width:15px;height:15px;border:1.5px solid var(--rule-strong);border-radius:2px;flex:none;position:relative;background:#fff}
+.toggle[aria-pressed="true"] .box{background:var(--indigo);border-color:var(--indigo)}
+.toggle[aria-pressed="true"] .box::after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.toggle .tl{font-size:12.5px;color:var(--ink)}
+.toggle .tn{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);margin-left:auto}
+
+/* ---------- main ---------- */
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:3px;margin-bottom:22px}
+.card-h{padding:14px 18px;border-bottom:1px solid var(--rule);display:flex;align-items:center;gap:12px}
+.card-h .t{font-family:var(--serif);font-size:17px;font-weight:600}
+.card-h .n{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint);margin-left:auto}
+.card-b{padding:18px}
+
+.tabs{display:flex;gap:4px;margin-bottom:14px}
+.tab{font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--ink-soft);background:var(--panel-2);border:1px solid var(--rule);border-bottom:none;border-radius:3px 3px 0 0;padding:8px 13px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--paper)}
+textarea{width:100%;min-height:150px;font-family:var(--mono);font-size:12.5px;line-height:1.5;color:var(--ink);background:var(--panel-2);border:1px solid var(--rule);border-radius:3px;padding:12px;resize:vertical}
+.drop{border:1.5px dashed var(--rule-strong);border-radius:4px;padding:34px 20px;text-align:center;background:var(--panel-2);cursor:pointer;transition:.15s}
+.drop:hover,.drop.over{border-color:var(--indigo);background:#fff}
+.drop .big{font-family:var(--serif);font-size:16px;margin-bottom:5px}
+.drop .small{font-size:12px;color:var(--ink-faint)}
+.drop .fname{font-family:var(--mono);font-size:12px;color:var(--green);margin-top:10px}
+.run{margin-top:16px;width:100%;font-family:var(--sans);font-weight:600;font-size:14px;letter-spacing:.01em;color:#fff;background:var(--indigo);border:none;border-radius:3px;padding:13px;cursor:pointer;transition:.12s}
+.run:hover{background:#22305a}
+.run:disabled{background:var(--rule-strong);cursor:not-allowed}
+
+/* streaming */
+.stream{display:flex;flex-direction:column}
+.srow{display:flex;align-items:center;gap:12px;padding:9px 18px;border-bottom:1px solid var(--rule);opacity:.32;transition:.25s}
+.srow:last-child{border-bottom:none}
+.srow.done{opacity:1}
+.srow.active{opacity:1;background:var(--amber-tint)}
+.srow .ic{width:17px;height:17px;flex:none;border-radius:50%;border:1.5px solid var(--rule-strong);display:grid;place-items:center;font-size:10px}
+.srow.done .ic{background:var(--green);border-color:var(--green);color:#fff}
+.srow.active .ic{border-color:var(--amber);border-top-color:transparent;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.srow .nm{font-size:13px}
+.srow .meta{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-soft)}
+
+/* results */
+.empty{padding:40px 20px;text-align:center;color:var(--ink-faint)}
+.empty .e1{font-family:var(--serif);font-size:17px;color:var(--ink-soft);margin-bottom:6px}
+.empty .e2{font-size:13px}
+.hyp{border:1px solid var(--rule);border-radius:3px;margin-bottom:14px;background:var(--panel-2);overflow:hidden}
+.hyp-top{display:flex;align-items:flex-start;gap:14px;padding:15px 17px 13px}
+.rank{font-family:var(--mono);font-size:12px;color:var(--ink-faint);padding-top:4px;min-width:26px}
+.hyp-main{flex:1;min-width:0}
+.benef{font-family:var(--serif);font-size:18px;font-weight:600;line-height:1.2;color:var(--ink);word-break:break-word}
+.benef.anon{color:var(--ink-faint);font-style:italic}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.chip{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;padding:3px 7px;border-radius:2px;border:1px solid var(--rule)}
+.chip.benef{background:var(--green-tint);color:var(--green);border-color:#cfe0d3}
+.chip.repr{background:var(--oxblood-tint);color:var(--oxblood);border-color:#e6cfca}
+.chip.sec{background:var(--panel);color:var(--ink-soft)}
+.valbox{text-align:right;min-width:140px}
+.val{font-family:var(--mono);font-size:21px;font-weight:600;color:var(--ink);letter-spacing:-.01em;white-space:nowrap}
+.pg{font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin-top:2px}
+.prob{display:flex;align-items:center;gap:10px;padding:0 17px 13px}
+.prob-bar{flex:1;height:7px;background:var(--rule);border-radius:4px;overflow:hidden}
+.prob-fill{height:100%;background:var(--indigo);border-radius:4px}
+.prob-n{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--indigo);min-width:42px;text-align:right}
+.prob-l{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
+
+/* signature: evidence ruler */
+.ledger{margin:0 17px 14px;padding:13px 14px;background:var(--panel);border:1px solid var(--rule);border-radius:3px}
+.ledger-h{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:9px;display:flex;justify-content:space-between}
+.ruler{display:flex;height:14px;border-radius:2px;overflow:hidden;background:var(--rule);margin-bottom:10px}
+.ruler .neg{background:var(--oxblood)}
+.ruler .pos{background:var(--green)}
+.ruler .pre{background:var(--amber)}
+.fchips{display:flex;gap:5px;flex-wrap:wrap}
+.fchip{font-family:var(--mono);font-size:10.5px;padding:3px 7px;border-radius:2px;display:flex;gap:5px;align-items:center}
+.fchip.pos{background:var(--green-tint);color:var(--green)}
+.fchip.neg{background:var(--oxblood-tint);color:var(--oxblood)}
+.fchip.pre{background:var(--amber-tint);color:var(--amber)}
+.fchip b{font-weight:600}
+.justif{font-size:12.5px;color:var(--ink-soft);margin-top:10px;line-height:1.5}
+.justif b{color:var(--ink);font-weight:600}
+
+.excerpt{margin:0 17px 14px;padding:12px 14px;background:#fff;border:1px solid var(--rule);border-left:3px solid var(--indigo);border-radius:0 3px 3px 0;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--ink-soft)}
+.excerpt mark{background:var(--amber-tint);color:var(--amber);font-weight:600;padding:0 2px;border-radius:2px}
+.secvals{margin:0 17px 15px;font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+.secvals b{color:var(--ink-soft);font-weight:600}
+.secvals span{color:var(--ink-soft)}
+
+.note{font-size:12px;color:var(--ink-faint);line-height:1.5;margin-top:4px}
+.err{background:var(--oxblood-tint);border:1px solid #e6cfca;color:var(--oxblood);padding:11px 14px;border-radius:3px;font-size:12.5px;margin-top:12px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="brand">
+      <div class="mark">Extrator<span class="arrow">→</span>Precatórios</div>
+      <div class="sub">Beneficiário · Valor total provável</div>
+    </div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusTxt">Aguardando documento</span></div>
+  </div>
+</header>
+
+<section class="metrics">
+  <div class="wrap"><div class="metrics-inner" id="metrics">
+    <div class="metric"><div class="k">Tempo</div><div class="v" id="m-tempo">·</div></div>
+    <div class="metric"><div class="k">Tokens</div><div class="v" id="m-tokens">·</div></div>
+    <div class="metric"><div class="k">Páginas</div><div class="v" id="m-pag">·</div></div>
+    <div class="metric"><div class="k">Valores</div><div class="v" id="m-val">·</div></div>
+    <div class="metric"><div class="k">Acima do mín.</div><div class="v" id="m-min">·</div></div>
+    <div class="metric"><div class="k">Regiões</div><div class="v" id="m-reg">·</div></div>
+    <div class="metric"><div class="k">Entidades</div><div class="v" id="m-ent">·</div></div>
+    <div class="metric"><div class="k">Hipóteses</div><div class="v accent" id="m-hip">·</div></div>
+  </div></div>
+</section>
+
+<div class="wrap grid">
+  <!-- CAMADA 1 · INTERFACE -->
+  <aside class="panel">
+    <div class="cfg">
+      <h2>Camada 1 · Parâmetros</h2>
+      <div class="cfg-body">
+
+        <div class="field">
+          <label>Percentual do documento</label>
+          <div class="seg" id="seg-pct">
+            <button data-v="100" aria-pressed="true">100%</button>
+            <button data-v="75">75%</button>
+            <button data-v="50">50%</button>
+            <button data-v="25">25%</button>
+          </div>
+          <div class="hint">Ou um intervalo de páginas (tem prioridade sobre o percentual).</div>
+          <div class="range-row" style="margin-top:7px">
+            <input type="number" id="pg-ini" placeholder="pág. inicial" min="1">
+            <span>até</span>
+            <input type="number" id="pg-fim" placeholder="pág. final" min="1">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Valor mínimo</label>
+          <div class="seg" id="seg-min">
+            <button data-v="1000">R$ 1.000</button>
+            <button data-v="5000" aria-pressed="true">R$ 5.000</button>
+            <button data-v="10000">R$ 10.000</button>
+            <button data-v="50000">R$ 50.000</button>
+          </div>
+          <div class="hint">Valores abaixo não abrem regiões próprias.</div>
+        </div>
+
+        <div class="field">
+          <label>Janela da região</label>
+          <div class="seg" id="seg-jan">
+            <button data-v="10">10 linhas</button>
+            <button data-v="20" aria-pressed="true">20 linhas</button>
+            <button data-v="30">30 linhas</button>
+          </div>
+          <div class="hint">Linhas acima e abaixo de cada valor.</div>
+        </div>
+
+        <div class="field">
+          <label>Multiplicador PRECATÓRIO</label>
+          <div class="seg" id="seg-mp">
+            <button data-v="1">1×</button>
+            <button data-v="2">2×</button>
+            <button data-v="3" aria-pressed="true">3×</button>
+            <button data-v="5">5×</button>
+          </div>
+          <div class="hint">Peso base 100. Maior peso individual do sistema.</div>
+        </div>
+
+        <div class="field">
+          <label>Multiplicador CÁLCULO</label>
+          <div class="seg" id="seg-mc">
+            <button data-v="1">1×</button>
+            <button data-v="2" aria-pressed="true">2×</button>
+            <button data-v="3">3×</button>
+            <button data-v="5">5×</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Máximo de resultados</label>
+          <div class="seg" id="seg-top">
+            <button data-v="10">Top 10</button>
+            <button data-v="20" aria-pressed="true">Top 20</button>
+            <button data-v="50">Top 50</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Rótulo para pessoa não encontrada</label>
+          <input type="text" id="label-na" value="Não identificado">
+        </div>
+      </div>
+    </div>
+
+    <div class="cfg" style="margin-top:18px">
+      <h2>Presets</h2>
+      <div class="cfg-body">
+        <div class="presets" id="presets">
+          <button data-p="rapido"><span>Rápido</span><span class="pdesc">5 fases</span></button>
+          <button data-p="balanceado" aria-pressed="true"><span>Balanceado</span><span class="pdesc">principais</span></button>
+          <button data-p="completo"><span>Completo</span><span class="pdesc">todas</span></button>
+          <button data-p="experimental"><span>Experimental</span><span class="pdesc">manual</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="cfg" style="margin-top:18px">
+      <h2>Camada 2 · Fases</h2>
+      <div class="cfg-body">
+        <div class="phases" id="phases"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main>
+    <div class="card">
+      <div class="card-h"><span class="t">Documento</span><span class="n">Entrada</span></div>
+      <div class="card-b">
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" aria-selected="true" data-tab="pdf">PDF</button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="texto">Colar texto</button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="exemplo">Exemplo</button>
+        </div>
+        <div id="pane-pdf">
+          <div class="drop" id="drop">
+            <div class="big">Solte um PDF de precatório aqui</div>
+            <div class="small">ou toque para selecionar. O texto é lido no seu navegador, nada é enviado.</div>
+            <div class="fname" id="fname"></div>
+          </div>
+          <input type="file" id="file" accept="application/pdf" hidden>
+        </div>
+        <div id="pane-texto" hidden>
+          <textarea id="texto" placeholder="Cole aqui o texto extraído do precatório..."></textarea>
+        </div>
+        <div id="pane-exemplo" hidden>
+          <p class="note">Carrega um ofício requisitório sintético com três beneficiários (duas pessoas e uma empresa), além de honorários, juros e custas como ruído, para você ver o ranqueamento funcionando de imediato.</p>
+          <button id="loadEx" class="seg" style="margin-top:6px;font-family:var(--mono);font-size:12px;padding:7px 12px;border:1px solid var(--rule);border-radius:2px;background:var(--panel-2);cursor:pointer">Carregar documento de exemplo</button>
+          <div class="fname" id="exname" style="font-family:var(--mono);font-size:12px;color:var(--green);margin-top:10px"></div>
+        </div>
+        <button class="run" id="run" disabled>Executar análise</button>
+        <div id="errbox"></div>
+      </div>
+    </div>
+
+    <div class="card" id="streamCard" hidden>
+      <div class="card-h"><span class="t">Execução</span><span class="n">Camada 3 · Streaming</span></div>
+      <div class="stream" id="stream"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><span class="t">Hipóteses</span><span class="n">Camada 5 · Saída</span></div>
+      <div class="card-b" id="results" style="padding:0">
+        <div class="empty"><div class="e1">Nenhuma análise executada</div><div class="e2">Carregue um documento e execute para ver beneficiário → valor total provável.</div></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+// ============================================================
+// MOTOR DE EXTRAÇÃO · BENEFICIÁRIOS E VALORES EM PRECATÓRIOS
+// Lógica pura (sem DOM). Fiel à especificação de 14 etapas.
+// ============================================================
+
+const RADICAIS_FORTES = ['benefic','credor','exequ','autor','favorec','titular','herde','sucess','pag','receb','levant','deposit','transfer','requis','principal','liquid','apur','devid','homolog','total','saldo'];
+const RADICAIS_MEDIOS = ['demonstr','rpv','decis','sentenc','despach'];
+const RADICAIS_NEGATIVOS = ['honor','advog','oab','juiz','desembarg','relator','servid','procurad','cust','despes','juros','correc','percent','inss','irrf','impost'];
+
+const CLASS_BENEFICIARIO = ['benefic','credor','exequ','herde','sucess'];
+const CLASS_REPRESENTANTE = ['advog','oab','procurad'];
+const CLASS_AUTORIDADE = ['juiz','desembarg','relator'];
+
+function stripAccentsLower(s){
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+
+// ETAPA 2 · detecção de valores
+const VALUE_RE = /(?:R\$\s*)?(?:\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d{2})?/g;
+const CPF_RE = /\d{3}\.\d{3}\.\d{3}-\d{2}/;
+const CNPJ_RE = /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/;
+const DATA_RE = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/;
+const PROC_RE = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/;
+
+function isJunkContext(line, matchIndex, matchText){
+  // verifica se o trecho ao redor é CPF/CNPJ/data/processo/percentual
+  const around = line.slice(Math.max(0, matchIndex-4), matchIndex + matchText.length + 4);
+  if (CPF_RE.test(around)) return true;
+  if (CNPJ_RE.test(around)) return true;
+  if (PROC_RE.test(around)) return true;
+  if (DATA_RE.test(around)) return true;
+  // percentual logo após
+  const after = line.slice(matchIndex + matchText.length, matchIndex + matchText.length + 2);
+  if (/^\s*%/.test(after)) return true;
+  return false;
+}
+
+function looksMonetary(matchText){
+  // prioriza valores com R$, com centavos, ou com separador de milhar
+  if (/R\$/.test(matchText)) return true;
+  if (/,\d{2}$/.test(matchText)) return true;
+  if (/[.\s]\d{3}/.test(matchText)) return true;
+  return false; // inteiro puro: aceito mas marcado fraco
+}
+
+// ETAPA 3 · normalização
+function normalizeValue(raw){
+  let s = raw.replace(/R\$/,'').trim();
+  s = s.replace(/[.\s]/g,'');      // remove milhar
+  s = s.replace(',', '.');          // decimal
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+function fmtBRL(n){
+  return n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+
+// ENTIDADES · detecção limitada por linha (não cruza quebras de linha)
+// nome próprio: palavras Capitalizadas (1a maiúscula, resto minúsculo) ligadas por conectores
+const NOME_RE = /(?:[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+)(?:\s+(?:da|de|do|das|dos|e)\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]?[a-záéíóúâêôãõç]*|\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]+){1,5}/g;
+const EMPRESA_RE = /\b([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇ.&'-]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇ.&'-]+)*\s+(?:LTDA|S\/A|S\.A\.|EIRELI|EPP|ME))\b/;
+const GOV_RE = /\b((?:Munic[ií]pio|Estado|Uni[aã]o|Fazenda|Prefeitura|Secretaria|Autarquia|Funda[cç][aã]o|Instituto)(?:\s+(?:de|do|da|dos|das))?\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇ ]*)/;
+
+const STOPWORDS_ENT = new Set(['Precatorio','Calculo','Demonstrativo','Requisicao','Pagamento','Valor','Total','Saldo','Honorarios','Juros','Tribunal','Justica','Vara','Oficio','Processo','Beneficiario','Beneficiaria','Credor','Credora','Exequente','Autor','Pagina','Data','Real','Reais','Determino','Despacho','Sentenca','Decisao']);
+
+function looksLikeName(text){
+  const words = text.trim().split(/\s+/).filter(w => !/^(da|de|do|das|dos|e)$/i.test(w));
+  if (words.length < 2) return false;
+  const meaningful = words.filter(w => !STOPWORDS_ENT.has(stripAccentsLower(w).replace(/^./, c=>c.toUpperCase())));
+  return meaningful.length >= 2;
+}
+
+// classifica entidade pelos radicais nas linhas próximas (janela curta)
+function classifyByContext(lines, lineIdx){
+  const seg = [];
+  for (let i = Math.max(0, lineIdx-2); i <= Math.min(lines.length-1, lineIdx+2); i++){
+    seg.push(stripAccentsLower(lines[i].text));
+  }
+  const ctx = seg.join(' ');
+  for (const r of CLASS_REPRESENTANTE) if (new RegExp('\\b'+r).test(ctx)) return 'representante';
+  for (const r of CLASS_AUTORIDADE)  if (new RegExp('\\b'+r).test(ctx)) return 'autoridade';
+  for (const r of CLASS_BENEFICIARIO) if (new RegExp('\\b'+r).test(ctx)) return 'beneficiario';
+  return 'indefinido';
+}
+
+// ETAPA 10 · detecção de seção dentro da região
+function detectSections(regionLines){
+  const sections = [];
+  regionLines.forEach((ln, i) => {
+    const t = ln.text.trim();
+    if (!t) return;
+    const isUpper = t === t.toUpperCase() && /[A-ZÁÉÍÓÚ]/.test(t);
+    const isShort = t.length <= 45;
+    const hasColon = /:/.test(t);
+    const isNumbered = /^\s*\d+[.)]/.test(t);
+    let signal = 0;
+    if (isUpper) signal += 2;
+    if (isShort) signal += 1;
+    if (hasColon) signal += 1;
+    if (isNumbered) signal += 1;
+    if (signal >= 2 && isShort) sections.push({ line: ln.globalLine, text: t });
+  });
+  return sections;
+}
+
+// ============================================================
+// PIPELINE PRINCIPAL
+// ============================================================
+function runPipeline(pages, params, onPhase){
+  // pages: [{page:Number, text:String}]
+  const t0 = Date.now();
+  const phase = (name, extra) => { if (onPhase) onPhase(name, extra); };
+
+  // ETAPA 1 · recorte
+  const totalPages = pages.length;
+  let selected = pages;
+  if (params.pageStart && params.pageEnd){
+    selected = pages.filter(p => p.page >= params.pageStart && p.page <= params.pageEnd);
+  } else if (params.percent && params.percent < 100){
+    const n = Math.max(1, Math.round(totalPages * params.percent/100));
+    selected = pages.slice(0, n);
+  }
+  // linhas planas globais
+  const lines = [];
+  selected.forEach(p => {
+    p.text.split(/\r?\n/).forEach(raw => {
+      lines.push({ globalLine: lines.length, page: p.page, text: raw });
+    });
+  });
+  phase('recorte', { totalPages, analyzed: selected.length, lines: lines.length });
+
+  // ETAPA 2 + 3 + 4 · valores
+  const valores = [];
+  if (params.fases.buscarValores !== false){
+    lines.forEach(ln => {
+      let m;
+      VALUE_RE.lastIndex = 0;
+      while ((m = VALUE_RE.exec(ln.text)) !== null){
+        const raw = m[0].trim();
+        if (raw.replace(/[^\d]/g,'').length === 0) continue;
+        if (isJunkContext(ln.text, m.index, raw)) continue;
+        const norm = normalizeValue(raw);
+        if (norm === null || norm <= 0) continue;
+        valores.push({
+          raw, norm, page: ln.page, line: ln.globalLine,
+          monetary: looksMonetary(raw),
+          context: ln.text.trim()
+        });
+      }
+    });
+  }
+  phase('valores', { count: valores.length });
+
+  let validos = valores;
+  if (params.fases.aplicarMinimo !== false){
+    validos = valores.filter(v => v.norm >= (params.valorMinimo || 0));
+  }
+  phase('minimo', { count: validos.length, min: params.valorMinimo });
+
+  // ETAPA 5 · regiões
+  const win = params.janela || 20;
+  let regions = [];
+  if (params.fases.criarRegioes !== false){
+    validos.forEach((v, idx) => {
+      const start = Math.max(0, v.line - win);
+      const end = Math.min(lines.length-1, v.line + win);
+      regions.push({
+        id: 'R'+(idx+1),
+        startLine: start, endLine: end,
+        anchorValue: v,
+        valores: [v],
+        page: v.page
+      });
+    });
+  }
+  phase('regioes', { count: regions.length });
+
+  // ETAPA 6 · fusão
+  if (params.fases.fundirRegioes !== false && regions.length){
+    regions.sort((a,b)=>a.startLine-b.startLine);
+    const merged = [];
+    let cur = regions[0];
+    for (let i=1;i<regions.length;i++){
+      const r = regions[i];
+      if (r.startLine <= cur.endLine + 5){
+        cur.endLine = Math.max(cur.endLine, r.endLine);
+        cur.valores.push(...r.valores);
+      } else {
+        merged.push(cur); cur = r;
+      }
+    }
+    merged.push(cur);
+    merged.forEach((r,i)=> r.id = 'R'+(i+1));
+    regions = merged;
+  }
+  phase('fusao', { count: regions.length });
+
+  // ETAPA 7..10 · pontuação por região + seções
+  const allRadicais = [
+    ...RADICAIS_FORTES.map(r=>({r, w:100, tipo:'forte'})),
+    ...RADICAIS_MEDIOS.map(r=>({r, w:50, tipo:'medio'})),
+    ...RADICAIS_NEGATIVOS.map(r=>({r, w:-100, tipo:'negativo'})),
+  ];
+
+  function distanceFactor(dl){
+    const d = Math.abs(dl);
+    if (d === 0) return 1.0;
+    if (d <= 2) return 0.7;
+    if (d <= 5) return 0.4;
+    return 0.2;
+  }
+
+  const multP = params.multPrecator || 1;
+  const multC = params.multCalcul || 1;
+  const detectSecoesOn = params.fases.detectarSecoes !== false;
+
+  // pontua uma âncora (linha de um valor) somando radicais na janela ao redor
+  function scoreAnchor(anchorLine){
+    const start = Math.max(0, anchorLine - win);
+    const end = Math.min(lines.length-1, anchorLine + win);
+    const windowLines = lines.slice(start, end+1);
+    const factors = [];
+    let score = 0;
+    windowLines.forEach(ln => {
+      const lnNorm = stripAccentsLower(ln.text);
+      const dl = ln.globalLine - anchorLine;
+      const f = distanceFactor(dl);
+      allRadicais.forEach(rad => {
+        const re = new RegExp('\\b'+rad.r+'\\w*', 'g');
+        let hits = 0; while (re.exec(lnNorm) !== null){ hits++; if(hits>3) break; }
+        if (hits > 0){
+          const contrib = rad.w * f * hits;
+          score += contrib;
+          factors.push({ radical: rad.r, tipo: rad.tipo, peso: rad.w, dist: dl, fator: f, hits, contrib });
+        }
+      });
+      let mm;
+      const reP = /\bprecator\w*/g;
+      while ((mm = reP.exec(lnNorm)) !== null){
+        const contrib = 100 * multP * f; score += contrib;
+        factors.push({ radical:'precator', tipo:'precatorio', peso:100*multP, dist:dl, fator:f, hits:1, contrib });
+      }
+      const reC = /\bcalcul\w*/g;
+      while ((mm = reC.exec(lnNorm)) !== null){
+        const contrib = 100 * multC * f; score += contrib;
+        factors.push({ radical:'calcul', tipo:'calculo', peso:100*multC, dist:dl, fator:f, hits:1, contrib });
+      }
+    });
+    const sections = detectSecoesOn ? detectSections(windowLines) : [];
+    if (sections.length) score += 15 * sections.length;
+    factors.sort((a,b)=> Math.abs(b.contrib)-Math.abs(a.contrib));
+    return { score: Math.round(score), factors, sections };
+  }
+
+  // pontua regiões (para métricas e streaming)
+  regions.forEach(reg => {
+    reg.valores.sort((a,b)=> b.norm - a.norm);
+    reg.anchorValue = reg.valores[0];
+    reg.score = scoreAnchor(reg.anchorValue.line).score;
+  });
+  phase('pontuacao', {});
+
+  // ETAPA 11 + 12 · entidades (varredura global limitada por linha)
+  let entidades = [];
+  if (params.fases.extrairEntidades !== false){
+    lines.forEach(ln => {
+      const text = ln.text;
+      // pessoas
+      let m; NOME_RE.lastIndex = 0;
+      while ((m = NOME_RE.exec(text)) !== null){
+        const name = m[0].trim().replace(/\s+/g,' ');
+        if (!looksLikeName(name)) continue;
+        entidades.push({ name, line: ln.globalLine, page: ln.page, kind:'pessoa' });
+      }
+      // empresa
+      const em = EMPRESA_RE.exec(text);
+      if (em) entidades.push({ name: em[1].trim(), line: ln.globalLine, page: ln.page, kind:'empresa' });
+      // governo
+      const gov = GOV_RE.exec(text);
+      if (gov) entidades.push({ name: gov[1].trim().replace(/\s+/g,' '), line: ln.globalLine, page: ln.page, kind:'governo' });
+    });
+    // classifica
+    if (params.fases.classificarEntidades !== false){
+      entidades.forEach(e => { e.tipo = (e.kind==='governo'||e.kind==='empresa') ? 'beneficiario' : classifyByContext(lines, e.line); });
+    } else {
+      entidades.forEach(e => e.tipo = 'indefinido');
+    }
+  }
+  phase('entidades', { count: entidades.length });
+
+  // ETAPA 13 · associação ancorada no beneficiário
+  // para cada valor válido, pontua e encontra o beneficiário mais próximo
+  let hipoteses = [];
+  let hid = 0;
+  const assocWin = Math.min(win, 8); // beneficiário precisa estar próximo do valor
+  if (params.fases.associar !== false){
+    const benefCandidatos = entidades.filter(e =>
+      e.tipo === 'beneficiario' || (e.tipo === 'indefinido' && e.kind === 'pessoa'));
+
+    validos.forEach(v => {
+      const sc = scoreAnchor(v.line);
+      // melhor beneficiário: prioriza classificado, depois proximidade, com leve
+      // preferência para nome citado na mesma linha ou acima do valor
+      let best = null, bestCost = Infinity;
+      benefCandidatos.forEach(e => {
+        const dl = e.line - v.line;
+        if (Math.abs(dl) > assocWin) return;
+        const rank = e.tipo === 'beneficiario' ? 0 : 1;
+        const acima = dl <= 0 ? 0 : 1.5; // valor costuma vir depois do nome
+        const cost = rank * 100 + Math.abs(dl) + acima;
+        if (cost < bestCost){ best = e; bestCost = cost; }
+      });
+      hipoteses.push({
+        id: 'H'+(++hid),
+        beneficiario: best ? best.name : (params.labelNaoEncontrado || 'Não identificado'),
+        beneficiarioTipo: best ? best.tipo : null,
+        valor: v.norm, valorRaw: v.raw, page: v.page, line: v.line,
+        score: sc.score, factors: sc.factors, sections: sc.sections,
+        contexto: v.context, identificado: !!best
+      });
+    });
+  }
+  phase('associacao', {});
+
+  // ETAPA 14 · consolidação: cada beneficiário fica com o valor mais provável
+  if (params.fases.consolidar !== false){
+    const byBenef = new Map();
+    hipoteses.forEach(h => {
+      const key = stripAccentsLower(h.beneficiario);
+      if (!byBenef.has(key)) byBenef.set(key, []);
+      byBenef.get(key).push(h);
+    });
+    const consolidadas = [];
+    byBenef.forEach((arr, key) => {
+      if (key === stripAccentsLower(params.labelNaoEncontrado || 'Não identificado')){
+        // não identificados: mantém cada valor distinto como hipótese própria
+        const seen = new Set();
+        arr.sort((a,b)=> b.score - a.score).forEach(h => {
+          const vk = Math.round(h.valor);
+          if (seen.has(vk)) return; seen.add(vk);
+          consolidadas.push({ ...h, secundarios: [] });
+        });
+        return;
+      }
+      arr.sort((a,b)=> b.score - a.score);
+      const principal = arr[0];
+      principal.secundarios = arr.slice(1,6).map(h => ({ raw:h.valorRaw, norm:h.valor, page:h.page }));
+      // soma evidências dos demais valores do mesmo beneficiário
+      const extra = arr.slice(1).reduce((a,h)=> a + Math.round(h.score*0.15), 0);
+      principal.score += extra;
+      consolidadas.push(principal);
+    });
+    hipoteses = consolidadas;
+  } else {
+    hipoteses.forEach(h => h.secundarios = []);
+  }
+
+  // filtra scores não positivos (ruído puro)
+  hipoteses = hipoteses.filter(h => h.score > 0);
+  hipoteses.sort((a,b)=> b.score - a.score);
+
+  // probabilidade: escala relativa ao maior score
+  const maxScore = hipoteses.length ? hipoteses[0].score : 1;
+  hipoteses.forEach(h => {
+    const p = Math.max(5, Math.min(99, Math.round((h.score / maxScore) * 92 + 7)));
+    h.probabilidade = p;
+  });
+
+  const top = hipoteses.slice(0, params.topN || 20);
+
+  const elapsed = (Date.now()-t0)/1000;
+  const charCount = selected.reduce((a,p)=>a+p.text.length,0);
+  const metrics = {
+    tempo: elapsed,
+    tokens: Math.round(charCount/4),
+    totalPages, analyzed: selected.length,
+    valoresEncontrados: valores.length,
+    valoresAcimaMin: validos.length,
+    regioes: regions.length,
+    entidades: entidades.length,
+    hipoteses: top.length
+  };
+
+  return { hipoteses: top, metrics };
+}
+
+
+// ===================== CONTROLADOR DE INTERFACE =====================
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+const FASES = [
+  ['buscarValores','Buscar valores'],
+  ['aplicarMinimo','Aplicar valor mínimo'],
+  ['criarRegioes','Criar regiões'],
+  ['fundirRegioes','Fundir regiões'],
+  ['pontuar','Pontuar regiões'],
+  ['detectarSecoes','Detectar seções locais'],
+  ['extrairEntidades','Extrair entidades'],
+  ['classificarEntidades','Classificar entidades'],
+  ['associar','Associar entidades e valores'],
+  ['consolidar','Consolidar resultados'],
+];
+const PRESETS = {
+  rapido:       ['buscarValores','aplicarMinimo','criarRegioes','fundirRegioes','pontuar'],
+  balanceado:   FASES.map(f=>f[0]),
+  completo:     FASES.map(f=>f[0]),
+  experimental: null
+};
+const STREAM_STEPS = [
+  ['recorte','Recorte do documento'],
+  ['valores','Busca de valores'],
+  ['minimo','Aplicação do valor mínimo'],
+  ['regioes','Construção de regiões'],
+  ['fusao','Fusão de regiões'],
+  ['pontuacao','Pontuação por radicais'],
+  ['entidades','Extração de entidades'],
+  ['associacao','Associação valor e beneficiário'],
+  ['consolidacao','Consolidação de resultados'],
+];
+
+const state = { pages:null, source:'', fases:{} };
+FASES.forEach(f => state.fases[f[0]] = true);
+
+// ---- segmented controls ----
+function segValue(id){ const b=$('#'+id+' button[aria-pressed="true"]'); return b?+b.dataset.v:null; }
+$$('.seg[id]').forEach(seg=>{
+  seg.addEventListener('click', e=>{
+    const b=e.target.closest('button[data-v]'); if(!b)return;
+    seg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+  });
+});
+
+// ---- phases toggles ----
+const phasesEl = $('#phases');
+FASES.forEach(([key,label],i)=>{
+  const t=document.createElement('button');
+  t.className='toggle'; t.type='button'; t.dataset.key=key;
+  t.setAttribute('aria-pressed','true');
+  t.innerHTML=`<span class="box"></span><span class="tl">${label}</span><span class="tn">${String(i+1).padStart(2,'0')}</span>`;
+  t.addEventListener('click',()=>{
+    const on=t.getAttribute('aria-pressed')==='true';
+    t.setAttribute('aria-pressed', on?'false':'true');
+    state.fases[key]=!on;
+    setPreset('experimental',false);
+  });
+  phasesEl.appendChild(t);
+});
+function applyFases(){
+  $$('#phases .toggle').forEach(t=>{
+    const on=state.fases[t.dataset.key]!==false;
+    t.setAttribute('aria-pressed', on?'true':'false');
+  });
+}
+
+// ---- presets ----
+function setPreset(name, apply=true){
+  $$('#presets button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.p===name?'true':'false'));
+  if(!apply || name==='experimental') return;
+  const on=PRESETS[name];
+  FASES.forEach(([k])=> state.fases[k] = on.includes(k));
+  applyFases();
+}
+$$('#presets button').forEach(b=> b.addEventListener('click',()=>setPreset(b.dataset.p)) );
+
+// ---- tabs ----
+$$('.tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    $$('.tab').forEach(t=>t.setAttribute('aria-selected','false'));
+    tab.setAttribute('aria-selected','true');
+    ['pdf','texto','exemplo'].forEach(p=> $('#pane-'+p).hidden = p!==tab.dataset.tab );
+  });
+});
+
+// ---- input: file / drop ----
+const drop=$('#drop'), fileInput=$('#file');
+drop.addEventListener('click',()=>fileInput.click());
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over'); if(e.dataTransfer.files[0]) loadPdf(e.dataTransfer.files[0]);});
+fileInput.addEventListener('change',e=>{ if(e.target.files[0]) loadPdf(e.target.files[0]); });
+
+function setError(msg){ $('#errbox').innerHTML = msg?`<div class="err">${msg}</div>`:''; }
+function ready(txt){ const s=$('#status'); s.className='status ready'; $('#statusTxt').textContent=txt; $('#run').disabled=false; }
+
+async function loadPdf(file){
+  setError('');
+  if(typeof pdfjsLib==='undefined'){ setError('A biblioteca de leitura de PDF não carregou. Use a aba “Colar texto” ou verifique a conexão.'); return; }
+  $('#fname').textContent='Lendo '+file.name+' ...';
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    const pages=[];
+    for(let i=1;i<=pdf.numPages;i++){
+      const page=await pdf.getPage(i);
+      const tc=await page.getTextContent();
+      const rows={};
+      tc.items.forEach(it=>{
+        const y=Math.round(it.transform[5]);
+        (rows[y]=rows[y]||[]).push([it.transform[4],it.str]);
+      });
+      const text=Object.keys(rows).map(Number).sort((a,b)=>b-a)
+        .map(y=>rows[y].sort((a,b)=>a[0]-b[0]).map(p=>p[1]).join(' ')).join('\n');
+      pages.push({page:i,text});
+    }
+    state.pages=pages; state.source='pdf';
+    $('#fname').textContent=`${file.name} · ${pdf.numPages} páginas lidas`;
+    ready(file.name+' carregado');
+  }catch(err){
+    setError('Não foi possível ler o PDF ('+err.message+'). Tente colar o texto.');
+    $('#fname').textContent='';
+  }
+}
+
+// ---- texto ----
+$('#texto').addEventListener('input',e=>{
+  const v=e.target.value.trim();
+  if(v.length>20){ state.pages=[{page:1,text:e.target.value}]; state.source='texto'; ready('Texto pronto'); }
+});
+
+// ---- exemplo ----
+const EXEMPLO=`TRIBUNAL DE JUSTICA DO ESTADO DE SAO PAULO
+OFICIO REQUISITORIO DE PRECATORIO
+Processo 0012345-67.2019.8.26.0053
+Data 12/03/2024
+
+
+BENEFICIARIA
+Maria Aparecida da Silva
+CPF 123.456.789-00
+Credora principal na presente acao judicial.
+Valor do precatorio atualizado e homologado: R$ 248.530,12
+Honorarios advocaticios Dr. Joao Pereira OAB 123456: R$ 24.853,01
+Juros de mora aplicados sobre o principal: R$ 5.120,00
+Custas processuais recolhidas: R$ 1.230,00
+
+
+
+
+BENEFICIARIO
+Jose Carlos de Oliveira
+Exequente sucessor do credor original na demanda.
+Valor total do precatorio devido: R$ 87.940,55
+Honorarios sucumbenciais: R$ 8.794,05
+INSS retido na fonte: R$ 3.200,00
+
+
+
+
+CONSTRUTORA HORIZONTE LTDA
+Credora em acao de cobranca contra a Fazenda.
+Valor requisitado apurado e homologado: R$ 1.503.200,00
+Calculo elaborado pela contadoria judicial.
+
+
+
+
+Despacho do Juiz de Direito Dr. Antonio Ferreira
+Determino o pagamento conforme calculo homologado.
+Custas finais R$ 500,00.`;
+$('#loadEx').addEventListener('click',()=>{
+  state.pages=[{page:1,text:EXEMPLO}]; state.source='exemplo';
+  $('#exname').textContent='Documento de exemplo carregado · 3 beneficiários';
+  ready('Exemplo pronto');
+});
+
+// ---- params ----
+function readParams(){
+  const ini=+$('#pg-ini').value||null, fim=+$('#pg-fim').value||null;
+  return {
+    percent: segValue('seg-pct'),
+    pageStart: (ini&&fim)?ini:null,
+    pageEnd: (ini&&fim)?fim:null,
+    valorMinimo: segValue('seg-min'),
+    janela: segValue('seg-jan'),
+    multPrecator: segValue('seg-mp'),
+    multCalcul: segValue('seg-mc'),
+    topN: segValue('seg-top'),
+    labelNaoEncontrado: $('#label-na').value.trim()||'Não identificado',
+    fases: {...state.fases}
+  };
+}
+
+// ---- run + streaming ----
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wait = ms => new Promise(r=>setTimeout(r, reduce?0:ms));
+
+$('#run').addEventListener('click', runAnalysis);
+
+async function runAnalysis(){
+  if(!state.pages){ setError('Carregue um documento primeiro.'); return; }
+  setError('');
+  $('#run').disabled=true;
+  const s=$('#status'); s.className='status run'; $('#statusTxt').textContent='Processando';
+
+  // streaming rows
+  const streamCard=$('#streamCard'); streamCard.hidden=false;
+  const stream=$('#stream'); stream.innerHTML='';
+  const rows={};
+  STREAM_STEPS.forEach(([k,l])=>{
+    const r=document.createElement('div'); r.className='srow';
+    r.innerHTML=`<span class="ic">✓</span><span class="nm">${l}</span><span class="meta"></span>`;
+    stream.appendChild(r); rows[k]=r;
+  });
+  $('#results').innerHTML='<div class="empty"><div class="e2">Executando...</div></div>';
+
+  // run pipeline, capture events
+  const events={};
+  let out;
+  try{
+    out = runPipeline(state.pages, readParams(), (name,extra)=>{ events[name]=extra||{}; });
+    events['consolidacao'] = { count: out.hipoteses.length };
+  }catch(err){
+    setError('Erro na análise: '+err.message);
+    s.className='status ready'; $('#statusTxt').textContent='Erro'; $('#run').disabled=false; return;
+  }
+
+  // animate reveal
+  const metaTxt = {
+    recorte:e=>`${e.analyzed}/${e.totalPages} pág · ${e.lines} linhas`,
+    valores:e=>`${e.count} encontrados`,
+    minimo:e=>`${e.count} acima do mínimo`,
+    regioes:e=>`${e.count} criadas`,
+    fusao:e=>`${e.count} após fusão`,
+    pontuacao:()=>`radicais aplicados`,
+    entidades:e=>`${e.count} entidades`,
+    associacao:()=>`vínculos definidos`,
+    consolidacao:e=>`${e.count} hipóteses`
+  };
+  const setMetric=(id,v)=>{ $('#'+id).textContent=v; };
+  for(const [k] of STREAM_STEPS){
+    const r=rows[k]; r.classList.add('active');
+    await wait(150);
+    r.classList.remove('active'); r.classList.add('done');
+    const e=events[k]||{};
+    r.querySelector('.meta').textContent = metaTxt[k]? metaTxt[k](e):'';
+    if(k==='recorte') setMetric('m-pag', `${e.analyzed}/${e.totalPages}`);
+    if(k==='valores') setMetric('m-val', e.count);
+    if(k==='minimo')  setMetric('m-min', e.count);
+    if(k==='fusao')   setMetric('m-reg', e.count);
+    if(k==='entidades') setMetric('m-ent', e.count);
+  }
+
+  // final metrics
+  const m=out.metrics;
+  setMetric('m-tempo', m.tempo.toFixed(2)+'s');
+  setMetric('m-tokens', m.tokens.toLocaleString('pt-BR'));
+  setMetric('m-pag', `${m.analyzed}/${m.totalPages}`);
+  setMetric('m-hip', m.hipoteses);
+
+  renderResults(out.hipoteses, readParams());
+  s.className='status ready'; $('#statusTxt').textContent='Concluído'; $('#run').disabled=false;
+}
+
+// ---- render ----
+function esc(s){ return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderResults(hyps, params){
+  const box=$('#results');
+  if(!hyps.length){
+    box.innerHTML='<div class="empty"><div class="e1">Nenhuma hipótese acima do limiar</div><div class="e2">Reduza o valor mínimo ou amplie a janela da região.</div></div>';
+    return;
+  }
+  box.innerHTML='';
+  hyps.forEach((h,i)=>{
+    // somatórios para a régua de evidências
+    let pos=0,neg=0,pre=0;
+    h.factors.forEach(f=>{
+      if(f.tipo==='precatorio'||f.tipo==='calculo') pre+=Math.abs(f.contrib);
+      else if(f.contrib>=0) pos+=f.contrib;
+      else neg+=Math.abs(f.contrib);
+    });
+    const tot=pos+neg+pre||1;
+    const wPos=(pos/tot*100), wPre=(pre/tot*100), wNeg=(neg/tot*100);
+
+    const top=h.factors.slice(0,6).map(f=>{
+      const cls=(f.tipo==='precatorio'||f.tipo==='calculo')?'pre':(f.contrib>=0?'pos':'neg');
+      const sign=f.contrib>=0?'+':'';
+      const name=f.radical.toUpperCase();
+      return `<span class="fchip ${cls}"><b>${name}</b>${sign}${Math.round(f.contrib)}</span>`;
+    }).join('');
+
+    // justificativa
+    const posR=h.factors.filter(f=>f.contrib>0&&f.tipo!=='precatorio'&&f.tipo!=='calculo').slice(0,3).map(f=>f.radical);
+    const negR=h.factors.filter(f=>f.contrib<0).slice(0,2).map(f=>f.radical);
+    const hasPre=h.factors.some(f=>f.tipo==='precatorio');
+    const hasCalc=h.factors.some(f=>f.tipo==='calculo');
+    let just='Sinais a favor: ';
+    const sigs=[];
+    if(hasPre) sigs.push(`<b>precatório ×${params.multPrecator}</b>`);
+    if(hasCalc) sigs.push(`<b>cálculo ×${params.multCalcul}</b>`);
+    posR.forEach(r=>sigs.push(r));
+    just+= sigs.length?sigs.join(', '):'proximidade do valor';
+    if(negR.length) just+=`. Penalizado por ${negR.join(', ')}.`;
+    else just+='.';
+
+    // chip tipo
+    let chip='';
+    if(!h.identificado) chip='<span class="chip sec">não identificado</span>';
+    else if(h.beneficiarioTipo==='beneficiario') chip='<span class="chip benef">beneficiário</span>';
+    else chip='<span class="chip sec">nome próximo</span>';
+
+    // excerpt highlight
+    let exc=esc(h.contexto);
+    if(h.valorRaw){ const vr=esc(h.valorRaw); exc=exc.split(vr).join('<mark>'+vr+'</mark>'); }
+
+    const sec = (h.secundarios&&h.secundarios.length)
+      ? `<div class="secvals"><b>Valores secundários na região:</b> ${h.secundarios.map(v=>`<span>${fmtBRL(v.norm)}</span>`).join(' · ')}</div>` : '';
+
+    const card=document.createElement('div'); card.className='hyp';
+    card.innerHTML=`
+      <div class="hyp-top">
+        <div class="rank">${String(i+1).padStart(2,'0')}</div>
+        <div class="hyp-main">
+          <div class="benef ${h.identificado?'':'anon'}">${esc(h.beneficiario)}</div>
+          <div class="chips">${chip}<span class="chip sec">pág ${h.page}</span><span class="chip sec">score ${h.score}</span></div>
+        </div>
+        <div class="valbox"><div class="val">${fmtBRL(h.valor)}</div><div class="pg">valor total provável</div></div>
+      </div>
+      <div class="prob">
+        <span class="prob-l">prob</span>
+        <div class="prob-bar"><div class="prob-fill" style="width:${h.probabilidade}%"></div></div>
+        <span class="prob-n">${h.probabilidade}%</span>
+      </div>
+      <div class="ledger">
+        <div class="ledger-h"><span>Régua de evidências</span><span>peso a favor / contra</span></div>
+        <div class="ruler">
+          <span class="neg" style="width:${wNeg}%"></span>
+          <span class="pos" style="width:${wPos}%"></span>
+          <span class="pre" style="width:${wPre}%"></span>
+        </div>
+        <div class="fchips">${top}</div>
+        <div class="justif">${just}</div>
+      </div>
+      <div class="excerpt">${exc}</div>
+      ${sec}
+    `;
+    box.appendChild(card);
+  });
+}
+
+// init
+setPreset('balanceado');
+</script>
+</body>
+</html>

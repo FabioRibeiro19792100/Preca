@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+precatorios-*.json
+service-account.json
+google-service-account.json
