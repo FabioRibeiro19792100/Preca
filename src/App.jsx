@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { STREAM_STEPS, fmtBRL } from './engine.js';
 
 const DRIVE_FOLDER_URL = 'https://drive.google.com/drive/folders/1ZCQ-nf8gva6R8lqAC6P_K6RYblh5s0wv';
-const DRIVE_API_BASE_URL = 'http://127.0.0.1:5174';
-const DRIVE_API_URL = `${DRIVE_API_BASE_URL}/api/drive/search`;
+const DRIVE_API_URL = '/api/drive/search';
 const VALUE_RE = /(?:R\$\s*)?(?:\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d{2})?/g;
 const CPF_RE = /\d{3}\.\d{3}\.\d{3}-\d{2}/;
 const CNPJ_RE = /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/;
@@ -19,6 +18,15 @@ const DEFAULT_METRICS = {
   reg: '·',
   ent: '·',
   hip: '·',
+};
+
+const FILE_RETRY_LIMIT = 2;
+const BATCH_STATUS_LABELS = {
+  queued: 'na fila',
+  running: 'em andamento',
+  completed: 'concluído',
+  error: 'falhou',
+  missing: 'sem arquivo',
 };
 
 const METRIC_LABELS = [
@@ -241,6 +249,18 @@ function renderHighlightedContext(snippet, name, valueRaw = '') {
   });
 }
 
+function shouldShowStreamRow(row) {
+  if (!row) return false;
+  if (row.key === 'scope' || row.key === 'names') return false;
+  if (row.key.endsWith('-file')) return false;
+  return true;
+}
+
+function toCsvCell(value) {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 const COVER_CONTEXT_RULES = [
   { regex: /\bsaldo a ser rateado\b/, weight: 220, tipo: 'ancora' },
   { regex: /\bcredito total\b/, weight: 180, tipo: 'ancora' },
@@ -388,8 +408,7 @@ function runCoverMotorPipeline(valuePages, params, coverPages = []) {
   const totalPages = valuePages.length + coverPages.length;
   const audit = [];
   const names = extractCoverNamesFromPages(coverPages.length ? coverPages : valuePages.slice(0, Math.min(3, valuePages.length)));
-  const coverLawyers = extractLinkedLawyersFromPages(coverPages.length ? coverPages : valuePages.slice(0, Math.min(3, valuePages.length)));
-  const lawyers = coverLawyers.length ? coverLawyers : extractLinkedLawyersFromPages([...coverPages, ...valuePages]);
+  const lawyers = coverPages.length ? extractLinkedLawyersFromPages(coverPages) : [];
   const lines = [];
   valuePages.forEach((page) => {
     page.text.split(/\r?\n/).forEach((raw) => {
@@ -408,14 +427,6 @@ function runCoverMotorPipeline(valuePages, params, coverPages = []) {
     label: 'Nomes da capa',
     meta: names.length ? `${names.length} nome(s) · ${names.slice(0, 4).join(' | ')}` : 'nenhum nome reconhecido',
     state: names.length ? 'done' : 'active',
-  });
-  audit.push({
-    key: 'lawyers',
-    label: 'Advogados vinculados',
-    meta: coverLawyers.length
-      ? `${coverLawyers.length} vínculo(s) na capa · ${coverLawyers.slice(0, 4).join(' · ')}`
-      : (lawyers.length ? `${lawyers.length} vínculo(s) no processo · ${lawyers.slice(0, 4).join(' · ')}` : 'nenhum advogado reconhecido'),
-    state: lawyers.length ? 'done' : 'active',
   });
 
   const hypMap = new Map();
@@ -481,12 +492,6 @@ function runCoverMotorPipeline(valuePages, params, coverPages = []) {
       });
     });
 
-    audit.push({
-      key: `name-${nameNorm}`,
-      label: name,
-      meta: `âncoras ${anchorHits.length} · candidatos ${candidateCount} · aceitos ${acceptedCount}`,
-      state: anchorHits.length || candidateCount ? 'done' : 'active',
-    });
   });
 
   let hipoteses = [...hypMap.values()];
@@ -639,23 +644,61 @@ function groupDriveHypotheses(driveResults = [], limit = Infinity) {
   });
 }
 
+function createBatchState(results = []) {
+  return results.map((item) => ({
+    process: item.process,
+    status: item.status === 'found' ? 'queued' : 'missing',
+    filesTotal: item.matches.length,
+    filesDone: 0,
+    filesFailed: 0,
+    retries: 0,
+    message: item.matches.length ? 'Aguardando na fila' : 'Nenhum arquivo localizado no Drive',
+  }));
+}
+
+function summarizeBatchState(batchState = []) {
+  return batchState.reduce((acc, item) => {
+    acc.total += 1;
+    if (item.status === 'completed') acc.completed += 1;
+    else if (item.status === 'running') acc.running += 1;
+    else if (item.status === 'error') acc.error += 1;
+    else if (item.status === 'missing') acc.missing += 1;
+    else acc.queued += 1;
+    acc.filesTotal += item.filesTotal || 0;
+    acc.filesDone += item.filesDone || 0;
+    acc.filesFailed += item.filesFailed || 0;
+    return acc;
+  }, { total: 0, completed: 0, running: 0, error: 0, missing: 0, queued: 0, filesTotal: 0, filesDone: 0, filesFailed: 0 });
+}
+
+async function withRetries(task, retries = FILE_RETRY_LIMIT) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const value = await task(attempt);
+      return { value, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 export default function App() {
   const mountedRef = useRef(true);
   const [status, setStatus] = useState({ mode: 'idle', text: 'Aguardando documento' });
   const [config, setConfig] = useState({
-    percent: 25,
+    percent: 100,
     pageStart: '',
     pageEnd: '',
     valorMinimo: 5000,
-    janela: 20,
+    janela: 10,
     janelaCapa: 10,
-    multPrecator: 3,
-    multCalcul: 2,
-    topN: 20,
+    multPrecator: 5,
+    multCalcul: 1,
+    topN: 5,
     minProbabilidade: 0,
   });
-  const [pages, setPages] = useState(null);
-  const [pdfSource, setPdfSource] = useState(null);
   const [error, setError] = useState('');
   const [running, setRunning] = useState(false);
   const [streamVisible, setStreamVisible] = useState(false);
@@ -664,9 +707,9 @@ export default function App() {
   const [driveResults, setDriveResults] = useState(null);
   const [driveMeta, setDriveMeta] = useState(null);
   const [pdfProgress, setPdfProgress] = useState('');
+  const [batchState, setBatchState] = useState([]);
   const [expandedEvidence, setExpandedEvidence] = useState({});
-  const [processList, setProcessList] = useState(`0000032-20.2004.4.01.4100
-0003044-56.2014.4.01.3400`);
+  const [processList, setProcessList] = useState('');
   const processNumbers = parseProcessList(processList);
   const tableGroups = Array.isArray(driveResults) ? groupDriveHypotheses(driveResults, config.topN) : [];
   const visibleTableGroups = tableGroups.map((group) => ({
@@ -674,6 +717,20 @@ export default function App() {
     rows: group.rows.filter((row) => row.hypothesis.probabilidade >= config.minProbabilidade),
     partyGroups: groupRowsByBeneficiary(group.rows.filter((row) => row.hypothesis.probabilidade >= config.minProbabilidade)),
   }));
+  const visibleStreamRows = streamRows.filter(shouldShowStreamRow);
+  const latestStreamRow = visibleStreamRows.length ? visibleStreamRows[visibleStreamRows.length - 1] : null;
+  const completedStreamCount = visibleStreamRows.filter((row) => row.state === 'done').length;
+  const hasActiveStream = visibleStreamRows.some((row) => row.state === 'active');
+  const streamProgressPct = visibleStreamRows.length
+    ? Math.max(
+      6,
+      Math.min(
+        100,
+        Math.round(((completedStreamCount + (running && hasActiveStream ? 0.45 : 0)) / visibleStreamRows.length) * 100),
+      ),
+    )
+    : 0;
+  const streamPreviewRows = visibleStreamRows.slice(-3).reverse();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -690,8 +747,63 @@ export default function App() {
     setConfig((current) => ({ ...current, [key]: value }));
   }
 
-  function toggleEvidence(rowId) {
-    setExpandedEvidence((current) => ({ ...current, [rowId]: !current[rowId] }));
+  function exportResultsCsv() {
+    const rows = visibleTableGroups.flatMap((group) => (
+      group.rows.map((row, index) => ({
+        processo: group.process,
+        ordem: index + 1,
+        parte: row.hypothesis.beneficiario,
+        advogados: group.lawyers?.join(' | ') || '',
+        valor: fmtBRL(row.hypothesis.valor),
+        pagina: row.hypothesis.page,
+        probabilidade: `${row.hypothesis.probabilidade}%`,
+        ocorrencias: row.occurrences,
+        evidencia: String(row.hypothesis.contexto || '').trim().replace(/\s+/g, ' '),
+      }))
+    ));
+
+    if (!rows.length) return;
+
+    const header = ['Processo', 'Ordem', 'Parte', 'Advogados', 'Valor', 'Página', 'Probabilidade', 'Ocorrências', 'Evidência'];
+    const csv = [
+      header.map(toCsvCell).join(','),
+      ...rows.map((row) => ([
+        row.processo,
+        row.ordem,
+        row.parte,
+        row.advogados,
+        row.valor,
+        row.pagina,
+        row.probabilidade,
+        row.ocorrencias,
+        row.evidencia,
+      ].map(toCsvCell).join(','))),
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    link.href = url;
+    link.download = `resultados-precatorios-${stamp}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function toggleGroupEvidence(group) {
+    const rowIds = group.rows.filter((row) => row.hypothesis.contexto).map((row) => row.id);
+    if (!rowIds.length) return;
+
+    const allExpanded = rowIds.every((rowId) => !!expandedEvidence[rowId]);
+    setExpandedEvidence((current) => {
+      const next = { ...current };
+      rowIds.forEach((rowId) => {
+        next[rowId] = !allExpanded;
+      });
+      return next;
+    });
   }
 
   async function runAnalysis() {
@@ -707,9 +819,29 @@ export default function App() {
     setDriveMeta(null);
     setStreamVisible(false);
     setStreamRows([]);
+    setBatchState([]);
+    setStreamRows([
+      {
+        key: 'validate-input',
+        label: 'Validando entrada',
+        meta: `${processNumbers.length} processo(s) recebido(s)`,
+        state: 'active',
+      },
+    ]);
+    setStreamVisible(true);
 
     try {
       const startedAt = performance.now();
+      if (mountedRef.current) {
+        setStreamRows([
+          {
+            key: 'drive-folder',
+            label: 'Consultando pasta do Drive',
+            meta: 'Procurando PDFs na pasta fixa',
+            state: 'active',
+          },
+        ]);
+      }
       const response = await fetch(DRIVE_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -724,7 +856,23 @@ export default function App() {
       }
       if (!mountedRef.current) return;
       const params = buildParams(config);
+      const initialBatch = createBatchState(payload.results);
+      setBatchState(initialBatch);
       setStatus({ mode: 'run', text: 'Analisando PDFs' });
+      setStreamRows([
+        {
+          key: 'drive-search',
+          label: 'Busca no Drive concluída',
+          meta: `${payload.scannedFiles} arquivo(s) varridos`,
+          state: 'done',
+        },
+        {
+          key: 'match-processes',
+          label: 'Cruzando processos informados',
+          meta: `${payload.results.length} processo(s) localizado(s) para análise`,
+          state: 'active',
+        },
+      ]);
       const analyzedResults = [];
       const auditRows = [
         {
@@ -743,40 +891,80 @@ export default function App() {
 
       for (const [index, item] of payload.results.entries()) {
         const analyzedItem = { ...item, matches: [...item.matches] };
+        if (mountedRef.current) {
+          setBatchState((current) => current.map((entry) => (
+            entry.process === item.process
+              ? { ...entry, status: item.matches.length ? 'running' : 'missing', message: item.matches.length ? 'Processando arquivos' : entry.message }
+              : entry
+          )));
+        }
         if (item.matches.length) {
           analyzedItem.matches = [];
           for (const file of item.matches) {
-            setPdfProgress(`Analisando ${file.name} (${index + 1}/${payload.results.length})`);
+            setPdfProgress(`PDF ${index + 1}/${payload.results.length}: ${file.name}`);
             try {
-              const response = await fetch(`${DRIVE_API_BASE_URL}/api/drive/files/${file.id}/download`);
-              if (!response.ok) {
-                const text = await response.text();
-                throw new Error(text || `Falha ao baixar ${file.name}.`);
-              }
-              const buffer = await response.arrayBuffer();
-              const bufferBytes = new Uint8Array(buffer);
-              const coverPagesFromDrive = await extractCoverPagesFromBuffer(bufferBytes.slice(), file.name);
-              const pagesFromDrive = await extractAllPagesFromBuffer(bufferBytes.slice(), params, file.name);
+              const { value: extraction, attempts } = await withRetries(async () => {
+                const extractResponse = await fetch(`/api/drive/files/${file.id}/extract`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    process: item.process,
+                    params,
+                  }),
+                });
+                if (!extractResponse.ok) {
+                  const text = await extractResponse.text();
+                  throw new Error(text || `Falha ao extrair ${file.name}.`);
+                }
+                return extractResponse.json();
+              });
+              const coverPagesFromDrive = extraction.coverPages || [];
+              const pagesFromDrive = extraction.valuePages || [];
               const analysis = runCoverMotorPipeline(pagesFromDrive, params, coverPagesFromDrive);
-              analyzedItem.matches.push({ ...file, analysis, pagesAnalyzed: pagesFromDrive.length + coverPagesFromDrive.length });
+              analyzedItem.matches.push({ ...file, analysis, pagesAnalyzed: pagesFromDrive.length + coverPagesFromDrive.length, attempts: attempts + 1 });
               auditRows.push({
                 key: `${file.id}-file`,
                 label: file.name,
-                meta: `${pagesFromDrive.length} pág. de valores · ${coverPagesFromDrive.length} pág. de capa · ${analysis.hipoteses.length} hipótese(s)`,
+                meta: `${pagesFromDrive.length}/${extraction.totalPages || pagesFromDrive.length} pág. úteis · ${coverPagesFromDrive.length} pág. de capa · ${analysis.hipoteses.length} hipótese(s)${attempts ? ` · retry ${attempts}` : ''}`,
                 state: analysis.hipoteses.length ? 'done' : 'active',
               });
               auditRows.push(...analysis.audit.map((row, rowIndex) => ({
                 ...row,
                 key: `${file.id}-${rowIndex}-${row.key}`,
               })));
+              if (mountedRef.current) {
+                setBatchState((current) => current.map((entry) => (
+                  entry.process === item.process
+                    ? {
+                        ...entry,
+                        filesDone: entry.filesDone + 1,
+                        retries: entry.retries + attempts,
+                        message: `${entry.filesDone + 1}/${entry.filesTotal} arquivo(s) concluídos`,
+                      }
+                    : entry
+                )));
+              }
             } catch (analysisError) {
-              analyzedItem.matches.push({ ...file, analysisError: analysisError.message });
+              analyzedItem.matches.push({ ...file, analysisError: analysisError.message, attempts: FILE_RETRY_LIMIT + 1 });
               auditRows.push({
                 key: `${file.id}-error`,
                 label: file.name,
                 meta: analysisError.message,
                 state: 'active',
               });
+              if (mountedRef.current) {
+                setBatchState((current) => current.map((entry) => (
+                  entry.process === item.process
+                    ? {
+                        ...entry,
+                        filesDone: entry.filesDone + 1,
+                        filesFailed: entry.filesFailed + 1,
+                        retries: entry.retries + FILE_RETRY_LIMIT,
+                        message: `${entry.filesDone + 1}/${entry.filesTotal} arquivo(s) processados · ${entry.filesFailed + 1} falha(s)`,
+                      }
+                    : entry
+                )));
+              }
             }
             if (mountedRef.current) {
               setStreamRows([...auditRows]);
@@ -785,6 +973,25 @@ export default function App() {
           }
         }
         analyzedResults.push(analyzedItem);
+        if (mountedRef.current) {
+          const failedFiles = analyzedItem.matches.filter((file) => file.analysisError).length;
+          const successFiles = analyzedItem.matches.filter((file) => file.analysis).length;
+          setBatchState((current) => current.map((entry) => (
+            entry.process === item.process
+              ? {
+                  ...entry,
+                  status: item.matches.length
+                    ? (successFiles > 0 ? 'completed' : 'error')
+                    : 'missing',
+                  filesDone: item.matches.length,
+                  filesFailed: failedFiles,
+                  message: item.matches.length
+                    ? `${successFiles} arquivo(s) com análise · ${failedFiles} falha(s)`
+                    : entry.message,
+                }
+              : entry
+          )));
+        }
         if (mountedRef.current) setDriveResults([...analyzedResults, ...payload.results.slice(index + 1)]);
       }
 
@@ -966,12 +1173,9 @@ export default function App() {
           <div className="brand compact">
             <div className="mark">Extrator<span className="arrow">→</span>Precatórios</div>
           </div>
-          <div className="top-status-wrap">
-            <div className={`status ${status.mode === 'ready' ? 'ready' : ''} ${status.mode === 'run' ? 'run' : ''}`}>
-              <span className="dot" />
-              <span>{status.text}</span>
-            </div>
-            {pdfProgress ? <div className="progress-pill">{pdfProgress}</div> : null}
+          <div className={`status header-status ${status.mode === 'ready' ? 'ready' : ''} ${status.mode === 'run' ? 'run' : ''}`}>
+            <span className="dot" />
+            <span>{status.text}</span>
           </div>
         </div>
       </header>
@@ -979,127 +1183,101 @@ export default function App() {
       <div className="wrap grid">
         <aside className="panel">
           <div className="cfg">
-            <h2>Camada 1 · Extração</h2>
-            <div className="cfg-body">
+            <h2>Filtros</h2>
+            <div className="cfg-body cfg-table">
               <div className="field">
                 <label>Percentual do documento</label>
-                <div className="seg">
-                  {[100, 75, 50, 25].map((value) => (
-                    <button key={value} data-v={value} aria-pressed={config.percent === value} onClick={() => updateConfig('percent', value)}>
-                      {value}%
-                    </button>
-                  ))}
+                <div className="field-control">
+                  <select className="config-select" value={config.percent} onChange={(event) => updateConfig('percent', Number(event.target.value))}>
+                    {[100, 75, 50, 25].map((value) => (
+                      <option key={value} value={value}>{value}%</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div className="field">
                 <label>Valor mínimo</label>
-                <div className="seg">
-                  {[
-                    [1000, 'R$ 1.000'],
-                    [5000, 'R$ 5.000'],
-                    [10000, 'R$ 10.000'],
-                    [50000, 'R$ 50.000'],
-                  ].map(([value, label]) => (
-                    <button key={value} data-v={value} aria-pressed={config.valorMinimo === value} onClick={() => updateConfig('valorMinimo', value)}>
-                      {label}
-                    </button>
-                  ))}
+                <div className="field-control">
+                  <select className="config-select" value={config.valorMinimo} onChange={(event) => updateConfig('valorMinimo', Number(event.target.value))}>
+                    {[
+                      [1000, 'R$ 1.000'],
+                      [5000, 'R$ 5.000'],
+                      [10000, 'R$ 10.000'],
+                      [50000, 'R$ 50.000'],
+                    ].map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
                 </div>
-                <div className="hint">Valores abaixo não abrem regiões próprias.</div>
               </div>
 
               <div className="field">
                 <label>Janela da região</label>
-                <div className="seg">
-                  {[10, 20, 30].map((value) => (
-                    <button key={value} data-v={value} aria-pressed={config.janela === value} onClick={() => updateConfig('janela', value)}>
-                      {value} linhas
-                    </button>
-                  ))}
+                <div className="field-control">
+                  <select className="config-select" value={config.janela} onChange={(event) => updateConfig('janela', Number(event.target.value))}>
+                    {[10, 20, 30].map((value) => (
+                      <option key={value} value={value}>{value} linhas</option>
+                    ))}
+                  </select>
+                  <div className="hint">Linhas acima e abaixo de cada valor.</div>
                 </div>
-                <div className="hint">Linhas acima e abaixo de cada valor.</div>
               </div>
 
               <div className="field">
                 <label>Janela da capa</label>
-                <div className="seg">
-                  {[5, 10, 15, 20].map((value) => (
-                    <button key={value} data-v={value} aria-pressed={config.janelaCapa === value} onClick={() => updateConfig('janelaCapa', value)}>
-                      {value} linhas
-                    </button>
-                  ))}
+                <div className="field-control">
+                  <select className="config-select" value={config.janelaCapa} onChange={(event) => updateConfig('janelaCapa', Number(event.target.value))}>
+                    {[5, 10, 15, 20].map((value) => (
+                      <option key={value} value={value}>{value} linhas</option>
+                    ))}
+                  </select>
+                  <div className="hint">Linhas antes e depois do nome da capa.</div>
                 </div>
-                <div className="hint">Linhas antes e depois do nome da capa.</div>
               </div>
 
               <div className="field">
-                <label>Multiplicador PRECATÓRIO</label>
-                <div className="seg">
-                  {[1, 2, 3, 5].map((value) => (
-                    <button key={value} data-v={value} aria-pressed={config.multPrecator === value} onClick={() => updateConfig('multPrecator', value)}>
-                      {value}×
-                    </button>
-                  ))}
-                </div>
-                <div className="hint">Peso base 100. Maior peso individual do sistema.</div>
-              </div>
-
-              <div className="field">
-                <label>Multiplicador CÁLCULO</label>
-                <div className="seg">
-                  {[1, 2, 3, 5].map((value) => (
-                    <button key={value} data-v={value} aria-pressed={config.multCalcul === value} onClick={() => updateConfig('multCalcul', value)}>
-                      {value}×
-                    </button>
-                  ))}
+                <label>Multiplicadores</label>
+                <div className="field-control">
+                  <select className="config-select" value={config.multPrecator} onChange={(event) => updateConfig('multPrecator', Number(event.target.value))}>
+                    {[1, 2, 3, 5].map((value) => (
+                      <option key={value} value={value}>Precatório {value}×</option>
+                    ))}
+                  </select>
+                  <div className="config-stack-gap" />
+                  <select className="config-select" value={config.multCalcul} onChange={(event) => updateConfig('multCalcul', Number(event.target.value))}>
+                    {[1, 2, 3, 5].map((value) => (
+                      <option key={value} value={value}>Cálculo {value}×</option>
+                    ))}
+                  </select>
+                  <div className="hint">Ajusta o peso das ocorrências ligadas a `precatório` e `cálculo` no score.</div>
                 </div>
               </div>
 
               <div className="field">
                 <label>Máximo de resultados por processo</label>
-                <div className="seg">
-                  {[
-                    [10, 'Top 10'],
-                    [20, 'Top 20'],
-                    [50, 'Top 50'],
-                  ].map(([value, label]) => (
-                    <button key={value} data-v={value} aria-pressed={config.topN === value} onClick={() => updateConfig('topN', value)}>
-                      {label}
-                    </button>
-                  ))}
+                <div className="field-control">
+                  <select className="config-select" value={config.topN} onChange={(event) => updateConfig('topN', Number(event.target.value))}>
+                    {[
+                      [3, 'Top 3'],
+                      [5, 'Top 5'],
+                      [10, 'Top 10'],
+                      [20, 'Top 20'],
+                      [50, 'Top 50'],
+                    ].map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
-
-              <div className="field">
-                <label>Força mínima de saída</label>
-                <div className="seg">
-                  {[
-                    [0, 'Sem corte'],
-                    [70, '70%'],
-                    [80, '80%'],
-                    [90, '90%'],
-                    [95, '95%'],
-                  ].map(([value, label]) => (
-                    <button
-                      key={value}
-                      data-v={value}
-                      aria-pressed={config.minProbabilidade === value}
-                      onClick={() => updateConfig('minProbabilidade', value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="hint">Filtra só a saída exibida. Não mexe na análise interna.</div>
               </div>
 
               <div className="field">
                 <label>Pasta fixa do Drive</label>
-                <div className="drive-box">
-                  <a href={DRIVE_FOLDER_URL} target="_blank" rel="noreferrer">{DRIVE_FOLDER_URL}</a>
+                <div className="field-control">
+                  <div className="drive-box">
+                    <a href={DRIVE_FOLDER_URL} target="_blank" rel="noreferrer">{DRIVE_FOLDER_URL}</a>
+                  </div>
                 </div>
-                <div className="hint">Os arquivos serão procurados sempre nessa pasta.</div>
               </div>
 
             </div>
@@ -1108,44 +1286,13 @@ export default function App() {
         </aside>
 
         <main>
-          <section className="input-block">
-            <div className="card-h">
-              <h2 className="t">Números dos arquivos</h2>
-              <span className="n">Entrada</span>
-            </div>
-            <div className="card-b">
-              <div className="field" style={{ marginTop: 0, marginBottom: 16 }}>
-                <textarea
-                  value={processList}
-                  onChange={(event) => setProcessList(event.target.value)}
-                  placeholder="Cole um número de processo por linha"
-                  className="process-list"
-                />
-                <div className="hint">Um processo por linha, por exemplo: `0000032-20.2004.4.01.4100`.</div>
-              </div>
-
-              <button className="run" disabled={!processNumbers.length || running} onClick={runAnalysis}>Executar análise <span className="arrow">→</span></button>
-              {error ? <div className="err">{error}</div> : null}
-            </div>
-          </section>
-
-          {streamVisible && (
-            <div className="card">
-              <div className="card-h"><span className="t">Execução</span><span className="n">Camada 3 · Streaming</span></div>
-              <div className="stream">
-                {streamRows.map((row) => (
-                  <div key={row.key} className={`srow ${row.state}`}>
-                    <span className="ic">✓</span>
-                    <span className="nm">{row.label}</span>
-                    <span className="meta">{row.meta}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           <div className="card">
-            <div className="card-h"><span className="t">Hipóteses</span><span className="n">Camada 5 · Saída</span></div>
+            <div className="section-head">
+              <h2>Resultados encontrados</h2>
+              {visibleTableGroups.some((group) => group.rows.length > 0) ? (
+                <button type="button" className="export-btn" onClick={exportResultsCsv}>Exportar CSV</button>
+              ) : null}
+            </div>
             <div className="card-b results-pad">
               {driveResults === null && (
                 <div className="empty">
@@ -1162,44 +1309,63 @@ export default function App() {
 
               {visibleTableGroups.some((group) => group.rows.length > 0) ? (
                 <div className="process-table-list">
-                  {visibleTableGroups.map((group) => (
+                  {visibleTableGroups.map((group) => {
+                    const groupEvidenceIds = group.rows.filter((row) => row.hypothesis.contexto).map((row) => row.id);
+                    const groupHasEvidence = groupEvidenceIds.length > 0;
+                    const groupExpanded = groupHasEvidence && groupEvidenceIds.every((rowId) => !!expandedEvidence[rowId]);
+
+                    return (
                     <section className="process-table-group" key={group.process}>
                       <div className="process-table-head">
                         <div className="process-head-copy">
                           {group.primaryFile?.url ? (
-                            <a className="process-title process-link" href={group.primaryFile.url} target="_blank" rel="noreferrer">
-                              {group.process}
-                            </a>
-                          ) : (
-                            <div className="process-title">{group.process}</div>
-                          )}
-                          <div className="process-lawyers-panel">
-                            <div className="process-lawyers-label">Advogados vinculados</div>
-                            {group.lawyers?.length ? (
-                              <div className="process-lawyers-list">
-                                {group.lawyers.slice(0, 6).map((lawyer) => (
-                                  <span className="lawyer-chip" key={`${group.process}-${lawyer}`}>{lawyer}</span>
-                                ))}
-                                {group.lawyers.length > 6 ? (
-                                  <span className="lawyer-chip lawyer-chip-more">+{group.lawyers.length - 6}</span>
-                                ) : null}
+                            <>
+                              <a className="process-title process-link" href={group.primaryFile.url} target="_blank" rel="noreferrer">
+                                {group.process}
+                              </a>
+                              <div className="process-subtitle">
+                                {group.lawyers?.length
+                                  ? `Advogados: ${group.lawyers.slice(0, 4).join(' | ')}`
+                                  : 'Advogados: não identificados na capa'}
                               </div>
-                            ) : (
-                              <div className="process-lawyers-empty">Não identificados na capa nem no processo</div>
-                            )}
-                          </div>
-                          <div className="process-subtitle">{group.fileCount} arquivo(s) encontrado(s) · {group.rows.length} hipótese(s) · {group.partyGroups.length} parte(s)</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="process-title">{group.process}</div>
+                              <div className="process-subtitle">
+                                {group.lawyers?.length
+                                  ? `Advogados: ${group.lawyers.slice(0, 4).join(' | ')}`
+                                  : 'Advogados: não identificados na capa'}
+                              </div>
+                            </>
+                          )}
                         </div>
-                        <span className={`chip ${group.status === 'found' ? 'benef' : 'sec'}`}>{group.status === 'found' ? 'encontrado' : 'não encontrado'}</span>
+                        <div className="process-head-actions">
+                          <span className={`chip ${group.status === 'found' ? 'benef' : 'sec'}`}>{group.status === 'found' ? 'encontrado' : 'não encontrado'}</span>
+                        </div>
                       </div>
 
                       {group.partyGroups.length > 0 ? (
                         <div className="results-ledger">
                           <div className="results-ledger-head">
+                            <div className="ledger-head-rank">Nº</div>
                             <div>Parte</div>
                             <div>Valor</div>
                             <div>Página</div>
-                            <div>Evidência</div>
+                            <div className="ledger-head-evidence">
+                              <span>Evidência</span>
+                              {groupHasEvidence ? (
+                                <button
+                                  type="button"
+                                  className="evidence-toggle process-evidence-toggle"
+                                  onClick={() => toggleGroupEvidence(group)}
+                                  aria-expanded={groupExpanded}
+                                >
+                                  <span className="evidence-toggle-icon">{groupExpanded ? '−' : '+'}</span>
+                                  <span>{groupExpanded ? 'ocultar' : 'ver'}</span>
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
                           <div className="results-ledger-body">
                             {group.rows.map((row, index) => (
@@ -1217,24 +1383,10 @@ export default function App() {
                                 </div>
                                 <div className="ledger-page">
                                   <div className="table-sub mono">pág. {row.hypothesis.page}</div>
-                                  <div className="table-sub mono muted">{row.pages.length} pág(s).</div>
                                 </div>
                                 <div className="ledger-evidence">
                                   {row.hypothesis.contexto ? (
                                     <div className="evidence-toggle-wrap">
-                                      <div className="evidence-party">
-                                        <span className="evidence-party-label">Parte vinculada</span>
-                                        <span className="evidence-party-name">{row.hypothesis.beneficiario}</span>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className="evidence-toggle"
-                                        onClick={() => toggleEvidence(row.id)}
-                                        aria-expanded={!!expandedEvidence[row.id]}
-                                      >
-                                        <span className="evidence-toggle-icon">{expandedEvidence[row.id] ? '−' : '+'}</span>
-                                        <span>{expandedEvidence[row.id] ? 'ocultar' : 'ver'}</span>
-                                      </button>
                                       {expandedEvidence[row.id] ? (
                                         <div className="evidence-snippet ledger-evidence-snippet">
                                           {renderHighlightedContext(row.hypothesis.contexto, row.hypothesis.beneficiario, row.hypothesis.valorRaw || fmtBRL(row.hypothesis.valor))}
@@ -1259,7 +1411,7 @@ export default function App() {
                       )}
 
                     </section>
-                  ))}
+                  )})}
                 </div>
               ) : null}
 
@@ -1275,6 +1427,55 @@ export default function App() {
 
             </div>
           </div>
+
+          <section className="input-block">
+            {running && latestStreamRow ? (
+              <div className={`stream-panel ${latestStreamRow.state}`}>
+                <div className="stream-panel-head">
+                  <span className="stream-panel-label">{latestStreamRow.label}</span>
+                  <span className="stream-panel-pct">{streamProgressPct}%</span>
+                </div>
+                <div className="stream-panel-bar">
+                  <div className="stream-panel-fill" style={{ width: `${streamProgressPct}%` }} />
+                </div>
+                <div className="stream-panel-meta">{latestStreamRow.meta}</div>
+                <div className="stream-memory">
+                  {streamPreviewRows.map((row) => (
+                    <div className={`stream-memory-row ${row.state}`} key={row.key}>
+                      <span className="stream-memory-dot" />
+                      <span className="stream-memory-text">{row.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="card-b composer-shell">
+              <div className="field" style={{ marginTop: 0, marginBottom: 16 }}>
+                <div className={`composer-field ${processList.trim() ? 'has-value' : ''} ${running ? 'is-condensed' : ''}`}>
+                  <span className="composer-label">Números dos arquivos</span>
+                  <textarea
+                    value={processList}
+                    onChange={(event) => setProcessList(event.target.value)}
+                    aria-label="Números dos arquivos"
+                    className="process-list"
+                  />
+                  <button
+                    type="button"
+                    className="composer-submit"
+                    disabled={!processNumbers.length || running}
+                    onClick={runAnalysis}
+                    aria-label="Executar análise"
+                  >
+                    <span className="arrow">→</span>
+                  </button>
+                  {!processList.trim() ? (
+                    <div className="composer-hint">Um processo por linha, por exemplo: `0000032-20.2004.4.01.4100`.</div>
+                  ) : null}
+                </div>
+              </div>
+              {error ? <div className="err">{error}</div> : null}
+            </div>
+          </section>
         </main>
       </div>
 
