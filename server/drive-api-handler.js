@@ -27,6 +27,14 @@ function writeJson(res, status, payload) {
 }
 
 async function readJsonBody(req) {
+  if (typeof req.body === 'string' && req.body.trim()) {
+    return JSON.parse(req.body);
+  }
+
+  if (req.body && typeof req.body === 'object') {
+    return req.body;
+  }
+
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   if (!chunks.length) return {};
