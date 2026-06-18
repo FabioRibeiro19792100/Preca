@@ -261,33 +261,6 @@ function toCsvCell(value) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-async function readApiPayload(response) {
-  const contentType = response.headers.get('content-type') || '';
-  const rawText = await response.text();
-
-  if (contentType.includes('application/json')) {
-    try {
-      return { data: JSON.parse(rawText), rawText };
-    } catch {
-      throw new Error('A API respondeu JSON inválido.');
-    }
-  }
-
-  if (/^\s*[{\[]/.test(rawText)) {
-    try {
-      return { data: JSON.parse(rawText), rawText };
-    } catch {
-      throw new Error('A API respondeu conteúdo inválido.');
-    }
-  }
-
-  if (/^\s*</.test(rawText) || rawText.startsWith('The page could not be found')) {
-    throw new Error('A rota da API não está disponível neste ambiente de produção.');
-  }
-
-  throw new Error(rawText.trim() || 'A API respondeu em formato inesperado.');
-}
-
 const COVER_CONTEXT_RULES = [
   { regex: /\bsaldo a ser rateado\b/, weight: 220, tipo: 'ancora' },
   { regex: /\bcredito total\b/, weight: 180, tipo: 'ancora' },
@@ -877,7 +850,7 @@ export default function App() {
           processes: processNumbers,
         }),
       });
-      const { data: payload } = await readApiPayload(response);
+      const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error || 'Erro ao buscar arquivos no Google Drive.');
       }
@@ -939,11 +912,11 @@ export default function App() {
                     params,
                   }),
                 });
-                const { data, rawText } = await readApiPayload(extractResponse);
                 if (!extractResponse.ok) {
-                  throw new Error(data?.error || rawText || `Falha ao extrair ${file.name}.`);
+                  const text = await extractResponse.text();
+                  throw new Error(text || `Falha ao extrair ${file.name}.`);
                 }
-                return data;
+                return extractResponse.json();
               });
               const coverPagesFromDrive = extraction.coverPages || [];
               const pagesFromDrive = extraction.valuePages || [];
@@ -1454,9 +1427,7 @@ export default function App() {
 
             </div>
           </div>
-        </main>
 
-        <aside className="composer-column">
           <section className="input-block">
             {running && latestStreamRow ? (
               <div className={`stream-panel ${latestStreamRow.state}`}>
@@ -1505,7 +1476,7 @@ export default function App() {
               {error ? <div className="err">{error}</div> : null}
             </div>
           </section>
-        </aside>
+        </main>
       </div>
 
       <footer className="dock">

@@ -126,6 +126,9 @@ async function buildDriveClient() {
 
   const keyFile = await findLocalServiceAccountJson();
   if (!keyFile) {
+    if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+      throw new Error('Credencial do Google Drive não encontrada. Configure a variável GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON no projeto da Vercel com o JSON completo da conta de serviço.');
+    }
     throw new Error('Credencial do Google Drive nao encontrada no projeto ou em projetos irmaos.');
   }
 
